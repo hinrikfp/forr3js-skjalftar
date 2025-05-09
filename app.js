@@ -32,7 +32,7 @@ function quakesObjReformat(obj) {
 class QuakeMap {
 	constructor(parent) {
 		let mapDiv = document.createElement("div");
-		mapDiv.style = "height: 400px; width: 600px;";
+		mapDiv.style = "height: 600px; width: 800px;";
 		parent.append(mapDiv);
 		mapDiv.id = "map";
 		let map = L.map(mapDiv, {
@@ -47,13 +47,14 @@ class QuakeMap {
 		this.mapDiv = mapDiv;
 		this.map = map;
 		this.quakeCircles = new Map();
-	}
-
-	addEarthquakes(quakeList) {
 		let markers = L.markerClusterGroup({
 			disableClusteringAtZoom: 11,
 			spiderfyOnMaxZoom: false,
 		});
+		this.markers = markers;
+	}
+
+	addEarthquakes(quakeList) {
 		for (let quake of quakeList) {
 			let color =
 				quake.magnitude > 3 ? "red"
@@ -66,10 +67,75 @@ class QuakeMap {
 				fillOpacity: 0.5,
 				radius: Math.pow(quake.magnitude * 5, 2),
 			});
+			quakeCircle.on("click", (e) => {
+				app.modal.text = `
+				magnitude: ${quake.magnitude}
+				location: ${quake.lat}, ${quake.long}
+				`;
+				app.modal.refresh();
+				app.modal.show();
+			});
 			this.quakeCircles.set(quake.event_id, quakeCircle);
-			markers.addLayer(quakeCircle);
+			this.markers.addLayer(quakeCircle);
 		}
-		this.map.addLayer(markers);
+		this.map.addLayer(this.markers);
+	}
+
+	clearQuakes() {
+		this.markers.clearLayers();
+	}
+}
+
+class Modal {
+	constructor(parent, text) {
+		this.text = text;
+		let id = "modal";
+		this.id = id;
+
+		let container = document.createElement("div");
+		container.style = `
+			margin: 0;
+			padding: 10px;
+			position: absolute;
+			width: 400px;
+			height: 300px;
+			border: 2px solid black;
+			border-radius: 10px;
+			background: white;
+			top: 20%;
+			left: 40%;
+			z-index: 1000;
+		`;
+		container.id = this.id;
+		let textElement = document.createElement("p");
+		textElement.innerText = this.text;
+		container.append(textElement);
+		let closeButton = document.createElement("button");
+		closeButton.addEventListener("click", (e) => {
+			document.getElementById(id).classList.add("hidden");
+		});
+		closeButton.innerText = "X";
+		closeButton.style = `
+			position: absolute;
+			right: 10px;
+			top: 10px;
+		`;
+		container.append(closeButton);
+
+		parent.append(container);
+
+		this.container = container;
+		this.textElement = textElement;
+	}
+
+	refresh() {
+		this.textElement.innerText = this.text;
+	}
+	hide() {
+		this.container.classList.add("hidden");
+	}
+	show() {
+		this.container.classList.remove("hidden");
 	}
 }
 
@@ -80,6 +146,11 @@ class App {
 			size_min: 1,
 		};
 		this.map = new QuakeMap(document.body);
+		this.modal = new Modal(document.body, "hello");
+
+		document.body.style = `
+			margin: 0;
+		`;
 	}
 
 	async init() {
@@ -88,10 +159,5 @@ class App {
 	}
 }
 
-async function app() {
-	let app = new App();
-	await app.init();
-}
-
-
-app();
+let app = new App();
+app.init();
