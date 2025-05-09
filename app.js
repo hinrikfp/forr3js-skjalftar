@@ -43,6 +43,11 @@ class QuakeMap {
 			maxZoom: 19,
 			attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
 		}).addTo(map);
+		map.on("zoomend", (e) => {
+			if (app.map) {
+				app.map.refresh();
+			}
+		});
 
 		this.mapDiv = mapDiv;
 		this.map = map;
@@ -52,10 +57,22 @@ class QuakeMap {
 			spiderfyOnMaxZoom: false,
 		});
 		this.markers = markers;
+		this.quakeList = [];
 	}
 
-	addEarthquakes(quakeList) {
-		for (let quake of quakeList) {
+	refresh() {
+		this.clearQuakes();
+		this.addEarthquakes();
+	}
+
+	setQuakes(quakeList) {
+		this.quakeList = quakeList;
+		this.clearQuakes();
+		this.addEarthquakes();
+	}
+
+	addEarthquakes() {
+		for (let quake of this.quakeList) {
 			let color =
 				quake.magnitude > 3 ? "red"
 					: quake.magnitude > 2 ? "orange"
@@ -65,7 +82,7 @@ class QuakeMap {
 				color: color,
 				fillColor: color,
 				fillOpacity: 0.5,
-				radius: Math.pow(quake.magnitude * 5, 2),
+				radius: Math.pow(quake.magnitude * 2.2, 2) * (20 - this.map.getZoom()),
 			});
 			quakeCircle.on("click", (e) => {
 				app.modal.text = `
@@ -121,6 +138,7 @@ class Modal {
 			top: 10px;
 		`;
 		container.append(closeButton);
+		container.classList.add("hidden");
 
 		parent.append(container);
 
@@ -139,23 +157,72 @@ class Modal {
 	}
 }
 
+class Slider {
+	constructor(parent, config, onSet) {
+		let slider = document.createElement("div");
+		slider.id = "slider";
+		parent.append(slider);
+		noUiSlider.create(slider, config);
+		slider.noUiSlider.on("set", onSet);
+	}
+}
+
+class FilterModule {
+	constructor(parent) {
+		let container = document.createElement("div");
+		container.style = `
+			display: grid;
+			padding: 20px;
+			padding-top: 40px;
+		`;
+		parent.append(container);
+		let magnitudeSlider = new Slider(container, {
+			start: [app.quakeParams.size_min, app.quakeParams.size_max],
+			connect: true,
+			range: {
+				min: 0,
+				max: 10,
+			},
+			tooltips: true,
+		}, (values) => {
+			console.log(values);
+			app.setMagMinMax(values);
+		});
+
+		this.magnitudeSlider = magnitudeSlider;
+		this.container = container;
+	}
+}
+
 class App {
 	constructor() {
 		this.quakeParams = {
 			start_time: "2025-03-30 00:00:00",
 			size_min: 1,
+			size_max: 10,
 		};
 		this.map = new QuakeMap(document.body);
 		this.modal = new Modal(document.body, "hello");
+		this.filterModule = new FilterModule(document.body);
 
 		document.body.style = `
 			margin: 0;
+			display: grid;
+			grid-template-columns: 1fr 1fr;
 		`;
 	}
 
 	async init() {
 		let quakes = await getQuakes(this.quakeParams);
-		this.map.addEarthquakes(quakes);
+		this.map.setQuakes(quakes);
+	}
+
+	setMagMinMax(values) {
+		this.quakeParams.size_min = parseFloat(values[0]);
+		this.quakeParams.size_max = parseFloat(values[1]);
+		getQuakes(this.quakeParams).then((quakes) => {
+			app.map.setQuakes(quakes);
+		})
 	}
 }
 
