@@ -16,6 +16,9 @@ async function getQuakes(params) {
 function quakesObjReformat(obj) {
 	let data = obj.data;
 	let quakeArray = []
+	if (!data.event_id) {
+		return [];
+	}
 	for (let i = 0; i < data.event_id.length; i++) {
 		let quakeObj = {
 			event_id: data.event_id[i],
@@ -167,17 +170,44 @@ class Slider {
 	}
 }
 
+class DatePicker {
+	constructor(parent, onPickerClose) {
+		let flatpickrElement = document.createElement("div");
+		flatpickrElement.innerText = "Select Date Range";
+		flatpickrElement.style = `
+			border: 2px solid black;
+			padding: 4px;
+			height: 20px;
+			width: fit-content;
+		`;
+		let fp = flatpickr(flatpickrElement, {
+			enableTime: true,
+			dateFormat: "d-m-Y H:i",
+			time_24hr: true,
+			mode: "range",
+			appendTo: parent,
+			onClose: onPickerClose,
+		});
+		parent.append(flatpickrElement);
+
+		this.flatpickrElement = flatpickrElement;
+		this.fp = fp;
+	}
+}
+
 class FilterModule {
-	constructor(parent) {
+	id = "filterModule";
+	constructor(parent, magSliderStart) {
 		let container = document.createElement("div");
 		container.style = `
 			display: grid;
 			padding: 20px;
 			padding-top: 40px;
 		`;
+		container.id = this.id;
 		parent.append(container);
 		let magnitudeSlider = new Slider(container, {
-			start: [app.quakeParams.size_min, app.quakeParams.size_max],
+			start: magSliderStart,
 			connect: true,
 			range: {
 				min: 0,
@@ -188,7 +218,13 @@ class FilterModule {
 			console.log(values);
 			app.setMagMinMax(values);
 		});
+		let datePicker = new DatePicker(container, (dates) => {
+			console.log(dates);
+			app.setDateRange(dates);
+		});
 
+
+		this.datePicker = datePicker;
 		this.magnitudeSlider = magnitudeSlider;
 		this.container = container;
 	}
@@ -198,12 +234,13 @@ class App {
 	constructor() {
 		this.quakeParams = {
 			start_time: "2025-03-30 00:00:00",
+			// end_time: flatpickr.formatDate(Date.now(), "Y-m-d H:i:S"),
 			size_min: 1,
 			size_max: 10,
 		};
 		this.map = new QuakeMap(document.body);
 		this.modal = new Modal(document.body, "hello");
-		this.filterModule = new FilterModule(document.body);
+		this.filterModule = new FilterModule(document.body, [this.quakeParams.size_min, this.quakeParams.size_max]);
 
 		document.body.style = `
 			margin: 0;
@@ -223,6 +260,13 @@ class App {
 		getQuakes(this.quakeParams).then((quakes) => {
 			app.map.setQuakes(quakes);
 		})
+	}
+	setDateRange(range) {
+		this.quakeParams.start_time = flatpickr.formatDate(range[0], "Y-m-d H:i:S");
+		this.quakeParams.end_time = flatpickr.formatDate(range[1], "Y-m-d H:i:S");
+		getQuakes(this.quakeParams).then((quakes) => {
+			app.map.setQuakes(quakes);
+		});
 	}
 }
 
