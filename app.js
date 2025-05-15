@@ -1,4 +1,3 @@
-
 async function getQuakes(params) {
 	const response = await fetch("https://api.vedur.is/skjalftalisa/v1/quake/array/", {
 		method: "POST",
@@ -25,6 +24,8 @@ function quakesObjReformat(obj) {
 			lat: data.lat[i],
 			long: data.long[i],
 			magnitude: data.magnitude[i],
+			depth: data.depth[i],
+			time: data.time[i],
 		};
 		quakeArray.push(quakeObj);
 	}
@@ -33,6 +34,7 @@ function quakesObjReformat(obj) {
 }
 
 class QuakeMap {
+	geoCircle = null;
 	constructor(parent) {
 		let mapDiv = document.createElement("div");
 		mapDiv.style = "height: 600px; width: 800px;";
@@ -87,10 +89,13 @@ class QuakeMap {
 				fillOpacity: 0.5,
 				radius: Math.pow(quake.magnitude * 2.2, 2) * (20 - this.map.getZoom()),
 			});
+			let time = new Date(quake.time * 1000);
 			quakeCircle.on("click", (e) => {
 				app.modal.text = `
 				magnitude: ${quake.magnitude}
 				location: ${quake.lat}, ${quake.long}
+				depth: ${quake.depth}
+				time: ${dayjs(time).format("D. MMMM YYYY kl: HH:mm:ss")}
 				`;
 				app.modal.refresh();
 				app.modal.show();
@@ -103,6 +108,19 @@ class QuakeMap {
 
 	clearQuakes() {
 		this.markers.clearLayers();
+	}
+
+	setGeoCircle(radius, coords) {
+		if (this.geoCircle) {
+			this.map.removeLayer(this.geoCircle)
+		}
+		this.geoCircle = L.circle([coords.latitude, coords.longitude], {
+			color: "pink",
+			fillColor: "pink",
+			fillOpacity: 0.1,
+			radius: radius,
+		}).addTo(app.map.map);
+
 	}
 }
 
@@ -117,8 +135,8 @@ class Modal {
 			margin: 0;
 			padding: 10px;
 			position: absolute;
-			width: 400px;
-			height: 300px;
+			width: 300px;
+			height: 200px;
 			border: 2px solid black;
 			border-radius: 10px;
 			background: white;
@@ -161,9 +179,9 @@ class Modal {
 }
 
 class Slider {
-	constructor(parent, config, onSet) {
+	constructor(parent, id, config, onSet) {
 		let slider = document.createElement("div");
-		slider.id = "slider";
+		slider.id = id;
 		parent.append(slider);
 		noUiSlider.create(slider, config);
 		slider.noUiSlider.on("set", onSet);
@@ -184,6 +202,8 @@ class DatePicker {
 			enableTime: true,
 			dateFormat: "d-m-Y H:i",
 			time_24hr: true,
+			maxDate: Date.now(),
+			minDate: new Date("1992-01-01"),
 			mode: "range",
 			appendTo: parent,
 			onClose: onPickerClose,
@@ -195,6 +215,71 @@ class DatePicker {
 	}
 }
 
+class GeoFilter {
+	constructor(parent) {
+		let container = document.createElement("div");
+		parent.append(container);
+		let geoLocToggle = document.createElement("input");
+		geoLocToggle.type = "checkbox";
+		geoLocToggle.style = "margin-bottom: 40px;";
+		geoLocToggle.addEventListener("change", (e) => {
+			if (e.currentTarget.checked) {
+				geoLocate();
+			} else {
+				app.setQuakesGeo(false);
+			}
+		});
+		let label = document.createElement("h3");
+		label.innerText = "Geolocate";
+		container.append(label);
+		container.append(geoLocToggle);
+		let radiusSlider = new Slider(container, "geo-slider", {
+			start: 100,
+			connect: true,
+			range: {
+				min: 0,
+				max: 500,
+			},
+			tooltips: true,
+
+		}, (value) => {
+			console.log(value);
+			app.setGeoRadius(parseFloat(value[0]) * 1000);
+		});
+
+		this.container = container;
+		this.geolocToggle = geoLocToggle;
+		this.label = label;
+		this.radiusSlider = radiusSlider;
+	}
+
+	geoOn() {
+		return this.geolocToggle.checked
+	}
+}
+
+function geoLocate() {
+	function success(position) {
+		app.setQuakesGeo(true, position);
+	}
+	function error(err) {
+		app.geoError(err.message);
+	}
+
+	navigator.permissions.query({ name: "geolocation" }).then((result) => {
+		if (result.state === "granted" || result.state === "prompt") {
+
+			if (navigator.geolocation) {
+				navigator.geolocation.getCurrentPosition(success, error);
+			} else {
+				app.geoError("unsupported");
+			}
+		} else {
+			app.geoError(`geolocation denied ${result.state}`);
+		}
+	})
+}
+
 class FilterModule {
 	id = "filterModule";
 	constructor(parent, magSliderStart) {
@@ -202,11 +287,13 @@ class FilterModule {
 		container.style = `
 			display: grid;
 			padding: 20px;
-			padding-top: 40px;
 		`;
 		container.id = this.id;
 		parent.append(container);
-		let magnitudeSlider = new Slider(container, {
+		let magnitudeLabel = document.createElement("h3");
+		magnitudeLabel.innerText = "Magnitude";
+		container.append(magnitudeLabel);
+		let magnitudeSlider = new Slider(container, "mag-slider", {
 			start: magSliderStart,
 			connect: true,
 			range: {
@@ -222,8 +309,10 @@ class FilterModule {
 			console.log(dates);
 			app.setDateRange(dates);
 		});
+		let geoFilter = new GeoFilter(container);
 
 
+		this.geoFilter = geoFilter;
 		this.datePicker = datePicker;
 		this.magnitudeSlider = magnitudeSlider;
 		this.container = container;
@@ -231,12 +320,23 @@ class FilterModule {
 }
 
 class App {
+	geoRadius = 100000;
+	geoPos = null;
 	constructor() {
 		this.quakeParams = {
 			start_time: "2025-03-30 00:00:00",
 			// end_time: flatpickr.formatDate(Date.now(), "Y-m-d H:i:S"),
 			size_min: 1,
 			size_max: 10,
+			fields: [
+				"event_id",
+				"lat",
+				"long",
+				"magnitude",
+				"time",
+				"depth",
+
+			]
 		};
 		this.map = new QuakeMap(document.body);
 		this.modal = new Modal(document.body, "hello");
@@ -250,6 +350,7 @@ class App {
 	}
 
 	async init() {
+		dayjs.locale("is");
 		let quakes = await getQuakes(this.quakeParams);
 		this.map.setQuakes(quakes);
 	}
@@ -257,16 +358,47 @@ class App {
 	setMagMinMax(values) {
 		this.quakeParams.size_min = parseFloat(values[0]);
 		this.quakeParams.size_max = parseFloat(values[1]);
-		getQuakes(this.quakeParams).then((quakes) => {
-			app.map.setQuakes(quakes);
-		})
+		this.setQuakesGeo(this.geoOn(), this.geoPos);
 	}
 	setDateRange(range) {
 		this.quakeParams.start_time = flatpickr.formatDate(range[0], "Y-m-d H:i:S");
 		this.quakeParams.end_time = flatpickr.formatDate(range[1], "Y-m-d H:i:S");
-		getQuakes(this.quakeParams).then((quakes) => {
-			app.map.setQuakes(quakes);
-		});
+		this.setQuakesGeo(this.geoOn(), this.geoPos);
+	}
+	setQuakesGeo(enable, pos) {
+		if (enable) {
+			let coords = pos.coords;
+			this.geoPos = pos;
+			getQuakes(this.quakeParams).then((quakes) => {
+				let quakesFiltered = quakes.filter((q) => {
+					const EARTH_RADIUS = 6371000;
+					let qlat = q.lat * Math.PI / 180;
+					let qlong = q.long * Math.PI / 180;
+					let plat = coords.latitude * Math.PI / 180;
+					let plong = coords.longitude * Math.PI / 180;
+					let dist = 2 * EARTH_RADIUS * Math.asin(Math.sqrt(Math.pow(Math.sin((qlat - plat) / 2), 2) + Math.cos(plat) * Math.cos(qlat) * Math.pow(Math.sin((qlong - plong) / 2), 2)));
+					return dist < this.geoRadius;
+				})
+				app.map.setGeoCircle(this.geoRadius, coords);
+				app.map.setQuakes(quakesFiltered);
+			});
+		} else {
+			getQuakes(this.quakeParams).then((quakes) => {
+				app.map.setQuakes(quakes);
+			})
+		}
+	}
+
+	geoError(err) {
+		console.error(err);
+	}
+	setGeoRadius(r) {
+		this.geoRadius = r;
+		console.log(this.geoRadius);
+		this.setQuakesGeo(true, this.geoPos);
+	}
+	geoOn() {
+		return this.filterModule.geoFilter.geoOn()
 	}
 }
 
